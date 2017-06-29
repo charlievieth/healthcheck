@@ -4,7 +4,9 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -25,7 +27,12 @@ type HealthCheck struct {
 }
 
 func NewHealthCheck(network, uri, port string, timeout time.Duration) HealthCheck {
-	return HealthCheck{network, uri, port, timeout}
+	return HealthCheck{
+		network: network,
+		uri:     uri,
+		port:    port,
+		timeout: timeout,
+	}
 }
 
 func (h *HealthCheck) CheckInterfaces(interfaces []net.Interface) error {
@@ -76,21 +83,36 @@ func noopReadAll(r io.Reader) {
 }
 
 func (h *HealthCheck) HTTPHealthCheck(ip net.IP) error {
+
+	u, err := url.Parse("http://" + IPString(ip) + ":" + h.port + h.uri)
+	if err != nil {
+		// WARN (CEV): Fix code
+		return &HealthCheckError{Code: -1, Message: "failed to parse URL: " + err.Error()}
+	}
+	if strings.LastIndex(u.Host, ":") > strings.LastIndex(u.Host, "]") {
+		u.Host = strings.TrimSuffix(u.Host, ":")
+	}
+	req := http.Request{
+		Method:     "GET",
+		URL:        u,
+		Proto:      "HTTP/1.1",
+		ProtoMajor: 1,
+		ProtoMinor: 1,
+		Header:     make(http.Header), // NB (CEV): memory here...
+		Body:       nil,
+		Host:       u.Host,
+	}
+
 	client := http.Client{
 		Timeout: h.timeout,
 	}
-	//
-	// WARN (CEV): This will chew memory!
-	// see: net/http/client.go#338
-	//
-	resp, err := client.Get("http://" + IPString(ip) + ":" + h.port + h.uri)
+	resp, err := client.Do(&req)
+
 	if err == nil {
 
 		// We need to read the request body to prevent extraneous errors in the server.
 		// We could make a HEAD request but there are concerns about servers that may
 		// not implement the RFC correctly.
-		//
-		// ioutil.ReadAll(resp.Body)
 		//
 		noopReadAll(resp.Body)
 		resp.Body.Close()
