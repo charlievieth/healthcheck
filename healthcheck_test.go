@@ -18,8 +18,8 @@ var _ = Describe("HealthCheck", func() {
 		It("returns healthcheck error with code "+strconv.Itoa(code)+" with an appropriate message", func() {
 			err := healthCheck()
 			Expect(err).To(HaveOccurred())
-			Expect(err).To(BeAssignableToTypeOf(healthcheck.HealthCheckError{}))
-			hErr := err.(healthcheck.HealthCheckError)
+			Expect(err).To(BeAssignableToTypeOf(new(healthcheck.HealthCheckError)))
+			hErr := err.(*healthcheck.HealthCheckError)
 			Expect(hErr.Code).To(Equal(code))
 			Expect(hErr.Message).To(ContainSubstring(reason))
 		})
@@ -29,7 +29,7 @@ var _ = Describe("HealthCheck", func() {
 		server     *ghttp.Server
 		serverAddr string
 
-		ip string
+		ip net.IP
 
 		uri         string
 		port        string
@@ -43,7 +43,7 @@ var _ = Describe("HealthCheck", func() {
 		ip = getNonLoopbackIP()
 		server = ghttp.NewUnstartedServer()
 
-		listener, err := net.Listen("tcp", ip+":0")
+		listener, err := net.Listen("tcp", ip.String()+":0")
 		Expect(err).NotTo(HaveOccurred())
 
 		timeout = 100 * time.Millisecond
@@ -94,9 +94,9 @@ var _ = Describe("HealthCheck", func() {
 
 				err = hc.CheckInterfaces(interfaces)
 				Expect(err).To(HaveOccurred())
-				Expect(err).To(BeAssignableToTypeOf(healthcheck.HealthCheckError{}))
+				Expect(err).To(BeAssignableToTypeOf(new(healthcheck.HealthCheckError)))
 
-				hErr := err.(healthcheck.HealthCheckError)
+				hErr := err.(*healthcheck.HealthCheckError)
 				// fails with different error codes on Linux (4) or OSX (64)
 				// check to see it was not the NO interfaces error (3)
 				Expect(hErr.Code).ToNot(Equal(3))
@@ -106,9 +106,9 @@ var _ = Describe("HealthCheck", func() {
 		It("fails appropriately when there are no interfaces", func() {
 			err := hc.CheckInterfaces(nil)
 			Expect(err).To(HaveOccurred())
-			Expect(err).To(BeAssignableToTypeOf(healthcheck.HealthCheckError{}))
+			Expect(err).To(BeAssignableToTypeOf(new(healthcheck.HealthCheckError)))
 
-			hErr := err.(healthcheck.HealthCheckError)
+			hErr := err.(*healthcheck.HealthCheckError)
 			Expect(hErr.Code).To(Equal(3))
 			Expect(hErr.Message).To(ContainSubstring("failure to find suitable interface"))
 		})
@@ -191,7 +191,7 @@ var _ = Describe("HealthCheck", func() {
 	})
 })
 
-func getNonLoopbackIP() string {
+func getNonLoopbackIP() net.IP {
 	interfaces, err := net.Interfaces()
 	Expect(err).NotTo(HaveOccurred())
 	for _, intf := range interfaces {
@@ -203,7 +203,8 @@ func getNonLoopbackIP() string {
 		for _, a := range addrs {
 			if ipnet, ok := a.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
 				if ipnet.IP.To4() != nil {
-					return ipnet.IP.String()
+					// return ipnet.IP.String()
+					return ipnet.IP
 				}
 			}
 		}

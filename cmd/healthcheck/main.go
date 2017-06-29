@@ -1,8 +1,8 @@
 package main
 
 import (
+	"errors"
 	"flag"
-	"fmt"
 	"net"
 	"os"
 	"time"
@@ -10,90 +10,93 @@ import (
 	"code.cloudfoundry.org/healthcheck"
 )
 
-var network = flag.String(
-	"network",
-	"tcp",
-	"network type to dial with (e.g. unix, tcp)",
+var (
+	network           string
+	uri               string
+	port              string
+	timeout           time.Duration
+	readinessInterval time.Duration
+	livenessInterval  time.Duration
 )
 
-var uri = flag.String(
-	"uri",
-	"",
-	"uri to healthcheck",
-)
+func init() {
+	flag.StringVar(
+		&network,
+		"network",
+		"tcp",
+		"network type to dial with (e.g. unix, tcp)",
+	)
+	flag.StringVar(
+		&uri,
+		"uri",
+		"",
+		"uri to healthcheck",
+	)
+	flag.StringVar(
+		&port,
+		"port",
+		"8080",
+		"port to healthcheck",
+	)
+	flag.DurationVar(
+		&timeout,
+		"timeout",
+		1*time.Second,
+		"dial timeout",
+	)
+	flag.DurationVar(
+		&readinessInterval,
+		"readiness-interval",
+		-1,
+		"if set, starts the healthcheck in readiness mode, i.e. do not exit until the healthcheck passes. runs checks every readiness-interval",
+	)
+	flag.DurationVar(
+		&livenessInterval,
+		"liveness-interval",
+		-1,
+		"if set, starts the healthcheck in liveness mode, i.e. do not exit until the healthcheck fail. runs checks every liveness-interval",
+	)
+}
 
-var port = flag.String(
-	"port",
-	"8080",
-	"port to healthcheck",
-)
+func realMain() error {
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return errors.New("failure to get interfaces: " + err.Error())
+	}
 
-var timeout = flag.Duration(
-	"timeout",
-	1*time.Second,
-	"dial timeout",
-)
+	h := newHealthCheck(network, uri, port, timeout)
 
-var readinessInterval = flag.Duration(
-	"readiness-interval",
-	0,
-	"if set, starts the healthcheck in readiness mode, i.e. do not exit until the healthcheck passes. runs checks every readiness-interval",
-)
+	if readinessInterval > 0 {
+		for {
+			if err := h.CheckInterfaces(interfaces); err == nil {
+				return nil
+			}
+			time.Sleep(readinessInterval)
+		}
+	}
 
-var livenessInterval = flag.Duration(
-	"liveness-interval",
-	0,
-	"if set, starts the healthcheck in liveness mode, i.e. do not exit until the healthcheck fail. runs checks every liveness-interval",
-)
+	if livenessInterval > 0 {
+		for {
+			if err := h.CheckInterfaces(interfaces); err != nil {
+				return err
+			}
+			time.Sleep(livenessInterval)
+		}
+	}
+
+	return h.CheckInterfaces(interfaces)
+}
 
 func main() {
 	flag.Parse()
 
-	interfaces, err := net.Interfaces()
-	if err != nil {
-		fmt.Println(fmt.Sprintf("failure to get interfaces: %s", err))
-		os.Exit(1)
-		return
-	}
-
-	h := newHealthCheck(*network, *uri, *port, *timeout)
-
-	if readinessInterval != nil && *readinessInterval > 0 {
-		for {
-			err = h.CheckInterfaces(interfaces)
-			if err == nil {
-				fmt.Println("healthcheck passed")
-				os.Exit(0)
-			}
-			time.Sleep(*readinessInterval)
+	if err := realMain(); err != nil {
+		if e, ok := err.(*healthcheck.HealthCheckError); ok {
+			os.Stdout.WriteString("healthcheck failed: " + e.Message)
+			os.Exit(e.Code)
 		}
+		os.Stdout.WriteString("healthcheck failed(unknown error)" + err.Error())
+		os.Exit(127)
 	}
-
-	if livenessInterval != nil && *livenessInterval > 0 {
-		for {
-			err = h.CheckInterfaces(interfaces)
-			if err != nil {
-				failHealthCheck(err)
-			}
-			time.Sleep(*livenessInterval)
-		}
-	}
-
-	err = h.CheckInterfaces(interfaces)
-	if err == nil {
-		fmt.Println("healthcheck passed")
-		os.Exit(0)
-	}
-
-	failHealthCheck(err)
-}
-
-func failHealthCheck(err error) {
-	if err, ok := err.(healthcheck.HealthCheckError); ok {
-		fmt.Println("healthcheck failed: " + err.Message)
-		os.Exit(err.Code)
-	}
-
-	fmt.Println("healthcheck failed(unknown error)" + err.Error())
-	os.Exit(127)
+	os.Stdout.WriteString("healthcheck passed")
 }
